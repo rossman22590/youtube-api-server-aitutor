@@ -77,52 +77,44 @@ class YouTubeTools:
             raise HTTPException(status_code=400, detail="Error getting video ID from URL")
 
         try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            # Standard usage pattern for youtube-transcript-api
             captions = None
-            
-            if languages:
-                # Try to find transcript in specified languages
-                try:
-                    transcript = transcript_list.find_transcript(languages)
-                    captions = transcript.fetch()
-                except Exception:
-                    # If exact match not found, try each language individually
-                    for lang in languages:
-                        try:
-                            transcript = transcript_list.find_transcript([lang])
-                            captions = transcript.fetch()
-                            break
-                        except Exception:
-                            continue
-                    
-                    # If still not found, try to translate from any available transcript
-                    if not captions:
-                        try:
-                            for transcript in transcript_list:
-                                if transcript.is_translatable:
-                                    translated = transcript.translate(languages[0])
-                                    captions = translated.fetch()
-                                    break
-                        except Exception:
-                            pass
-            else:
-                # Try to get transcript in English first, then any available
-                try:
-                    transcript = transcript_list.find_generated_transcript(['en'])
-                    captions = transcript.fetch()
-                except Exception:
+            if languages and len(languages) > 0:
+                # Try each language in order
+                for lang in languages:
                     try:
-                        transcript = transcript_list.find_manually_created_transcript(['en'])
-                        captions = transcript.fetch()
+                        captions = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
+                        break
                     except Exception:
-                        # Get any available transcript
-                        for transcript in transcript_list:
-                            captions = transcript.fetch()
-                            break
+                        continue
+                
+                # If no transcript found in specified languages, try without language filter
+                if not captions:
+                    try:
+                        captions = YouTubeTranscriptApi.get_transcript(video_id)
+                    except Exception:
+                        pass
+            else:
+                # No language specified, try to get any available transcript
+                try:
+                    captions = YouTubeTranscriptApi.get_transcript(video_id)
+                except Exception:
+                    # Try with English as fallback
+                    try:
+                        captions = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+                    except Exception:
+                        pass
             
             if captions:
                 return " ".join(line["text"] for line in captions)
             return "No captions found for video"
+        except AttributeError as e:
+            # If get_transcript doesn't exist, provide helpful error
+            available_methods = [m for m in dir(YouTubeTranscriptApi) if not m.startswith('_')]
+            raise HTTPException(
+                status_code=500, 
+                detail=f"YouTubeTranscriptApi method error. Available methods: {available_methods}. Error: {str(e)}"
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting captions for video: {str(e)}")
 
@@ -140,38 +132,28 @@ class YouTubeTools:
             raise HTTPException(status_code=400, detail="Error getting video ID from URL")
 
         try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            captions = None
             target_languages = languages or ["en"]
+            captions = None
             
-            # Try to find transcript in specified languages
-            try:
-                transcript = transcript_list.find_transcript(target_languages)
-                captions = transcript.fetch()
-            except Exception:
-                # If exact match not found, try each language individually
+            # Try to get transcript in specified languages
+            if languages and len(languages) > 0:
                 for lang in target_languages:
                     try:
-                        transcript = transcript_list.find_transcript([lang])
-                        captions = transcript.fetch()
+                        captions = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
                         break
                     except Exception:
                         continue
-                
-                # If still not found, try to get any available transcript
-                if not captions:
+            
+            # If no transcript found, try without language filter
+            if not captions:
+                try:
+                    captions = YouTubeTranscriptApi.get_transcript(video_id)
+                except Exception:
+                    # Try with English as fallback
                     try:
-                        transcript = transcript_list.find_generated_transcript(target_languages)
-                        captions = transcript.fetch()
+                        captions = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
                     except Exception:
-                        try:
-                            transcript = transcript_list.find_manually_created_transcript(target_languages)
-                            captions = transcript.fetch()
-                        except Exception:
-                            # Get any available transcript
-                            for transcript in transcript_list:
-                                captions = transcript.fetch()
-                                break
+                        pass
             
             if not captions:
                 raise HTTPException(status_code=404, detail="No captions found for video")
@@ -182,6 +164,13 @@ class YouTubeTools:
                 minutes, seconds = divmod(start, 60)
                 timestamps.append(f"{minutes}:{seconds:02d} - {line['text']}")
             return timestamps
+        except AttributeError as e:
+            # If get_transcript doesn't exist, provide helpful error
+            available_methods = [m for m in dir(YouTubeTranscriptApi) if not m.startswith('_')]
+            raise HTTPException(
+                status_code=500, 
+                detail=f"YouTubeTranscriptApi method error. Available methods: {available_methods}. Error: {str(e)}"
+            )
         except HTTPException:
             raise
         except Exception as e:
