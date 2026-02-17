@@ -77,11 +77,48 @@ class YouTubeTools:
             raise HTTPException(status_code=400, detail="Error getting video ID from URL")
 
         try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
             captions = None
+            
             if languages:
-                captions = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+                # Try to find transcript in specified languages
+                try:
+                    transcript = transcript_list.find_transcript(languages)
+                    captions = transcript.fetch()
+                except Exception:
+                    # If exact match not found, try each language individually
+                    for lang in languages:
+                        try:
+                            transcript = transcript_list.find_transcript([lang])
+                            captions = transcript.fetch()
+                            break
+                        except Exception:
+                            continue
+                    
+                    # If still not found, try to translate from any available transcript
+                    if not captions:
+                        try:
+                            for transcript in transcript_list:
+                                if transcript.is_translatable:
+                                    translated = transcript.translate(languages[0])
+                                    captions = translated.fetch()
+                                    break
+                        except Exception:
+                            pass
             else:
-                captions = YouTubeTranscriptApi.get_transcript(video_id)
+                # Try to get transcript in English first, then any available
+                try:
+                    transcript = transcript_list.find_generated_transcript(['en'])
+                    captions = transcript.fetch()
+                except Exception:
+                    try:
+                        transcript = transcript_list.find_manually_created_transcript(['en'])
+                        captions = transcript.fetch()
+                    except Exception:
+                        # Get any available transcript
+                        for transcript in transcript_list:
+                            captions = transcript.fetch()
+                            break
             
             if captions:
                 return " ".join(line["text"] for line in captions)
@@ -103,12 +140,49 @@ class YouTubeTools:
             raise HTTPException(status_code=400, detail="Error getting video ID from URL")
 
         try:
-            captions = YouTubeTranscriptApi.get_transcript(video_id, languages=languages or ["en"])
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            captions = None
+            target_languages = languages or ["en"]
+            
+            # Try to find transcript in specified languages
+            try:
+                transcript = transcript_list.find_transcript(target_languages)
+                captions = transcript.fetch()
+            except Exception:
+                # If exact match not found, try each language individually
+                for lang in target_languages:
+                    try:
+                        transcript = transcript_list.find_transcript([lang])
+                        captions = transcript.fetch()
+                        break
+                    except Exception:
+                        continue
+                
+                # If still not found, try to get any available transcript
+                if not captions:
+                    try:
+                        transcript = transcript_list.find_generated_transcript(target_languages)
+                        captions = transcript.fetch()
+                    except Exception:
+                        try:
+                            transcript = transcript_list.find_manually_created_transcript(target_languages)
+                            captions = transcript.fetch()
+                        except Exception:
+                            # Get any available transcript
+                            for transcript in transcript_list:
+                                captions = transcript.fetch()
+                                break
+            
+            if not captions:
+                raise HTTPException(status_code=404, detail="No captions found for video")
+            
             timestamps = []
             for line in captions:
                 start = int(line["start"])
                 minutes, seconds = divmod(start, 60)
                 timestamps.append(f"{minutes}:{seconds:02d} - {line['text']}")
             return timestamps
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error generating timestamps: {str(e)}")
